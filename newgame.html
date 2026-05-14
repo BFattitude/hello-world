@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catch the Monster - Twist Edition</title>
+    <script src="asset/library.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; }
+    </style>
+</head>
+<body>
+
+<script>
+    const config = {
+        type: Phaser.AUTO,
+        scale: {
+            mode: Phaser.Scale.FIT,
+            autoCenter: Phaser.Scale.CENTER_BOTH,
+            width: 400,
+            height: 600
+        },
+        physics: {
+            default: 'arcade',
+            arcade: { debug: false }
+        },
+        scene: { preload: preload, create: create, update: update }
+    };
+
+    const game = new Phaser.Game(config);
+    let player, monsters, score = 0, scoreText, cursors;
+
+    function preload() {
+        // ตรวจสอบว่าไฟล์ชื่อ mm_b.png, mm.png, paradox.webp, reset.webp, CAP-S.png อยู่ในโฟลเดอร์เดียวกัน
+        this.load.image('background', 'asset/paradox.webp');
+        this.load.image('playerImg', 'asset/CAP-S.png');
+        this.load.image('monsterGood', 'asset/mm_b.png'); // ตัวบวกคะแนน
+        this.load.image('monsterBad', 'asset/mm.png');    // ตัวลบคะแนน
+        this.load.image('resetBtnImg', 'asset/reset.webp'); 
+    }
+
+    function create() {
+        let bg = this.add.image(200, 300, 'background');
+        bg.setScale(Math.max(400 / bg.width, 600 / bg.height)).setScrollFactor(0);
+
+        player = this.physics.add.sprite(200, 500, 'playerImg').setScale(0.3).setCollideWorldBounds(true);
+        
+        monsters = this.physics.add.group({ bounceX: 1, bounceY: 1 });
+
+        // สร้าง Monster เริ่มต้น 2 แบบ
+        spawnMonster(this, 'monsterGood', true);
+        spawnMonster(this, 'monsterBad', false);
+
+        scoreText = this.add.text(16, 16, 'Score: 0', { 
+            fontSize: '24px', fill: '#00d2ff', fontFamily: 'Arial Black', stroke: '#000', strokeThickness: 4
+        });
+
+        // ปุ่ม RESET (สุ่มตำแหน่ง แต่ไม่รีเซ็ตคะแนน)
+        const resetBtn = this.add.image(384, 25, 'resetBtnImg').setOrigin(1, 0).setScale(0.5).setInteractive({ useHandCursor: true });
+        resetBtn.on('pointerdown', () => {
+            player.setPosition(Phaser.Math.Between(50, 350), Phaser.Math.Between(50, 550));
+            monsters.getChildren().forEach(m => m.setPosition(Phaser.Math.Between(50, 350), Phaser.Math.Between(50, 450)));
+            this.cameras.main.flash(200);
+        });
+
+        cursors = this.input.keyboard.createCursorKeys();
+
+        // ชน Player
+        this.physics.add.overlap(player, monsters, handleCollision, null, this);
+        // ชนกันเอง (Twist!)
+        this.physics.add.collider(monsters, monsters, twistMonsters, null, this);
+    }
+
+    function update() {
+        let currentSpeed = 300; 
+        player.setVelocity(0);
+
+        // ควบคุม Player
+        if (cursors.left.isDown) player.setVelocityX(-currentSpeed);
+        else if (cursors.right.isDown) player.setVelocityX(currentSpeed);
+        if (cursors.up.isDown) player.setVelocityY(-currentSpeed);
+        else if (cursors.down.isDown) player.setVelocityY(currentSpeed);
+
+        if (this.input.activePointer.isDown) {
+            this.physics.moveToObject(player, this.input.activePointer, currentSpeed);
+        }
+
+        // ระบบ AI เคลื่อนที่หนี (Apply ให้กับ Monster ทุกตัวในกลุ่ม)
+        monsters.getChildren().forEach((m) => {
+            let dist = Phaser.Math.Distance.Between(player.x, player.y, m.x, m.y);
+            
+            // ระยะ 150 พิกเซล มอนสเตอร์จะเริ่มไหวตัว
+            if (dist < 150) {
+                // คำนวณมุมตรงข้ามกับผู้เล่น
+                let angle = Phaser.Math.Angle.Between(player.x, player.y, m.x, m.y);
+                
+                // ใส่แรงผลัก (Acceleration) แทน Velocity เพื่อให้การออกตัวดูนุ่มนวลและไม่หยุดกะทันหัน
+                let escapeSpeed = 150 + (score * 0.5);
+                this.physics.velocityFromRotation(angle, escapeSpeed, m.body.velocity);
+            } else {
+                // ถ้าอยู่นอกระยะ ให้ค่อยๆ ชะลอตัวลงแต่ไม่หยุดกึก (Drag Effect)
+                m.body.setVelocity(m.body.velocity.x * 0.98, m.body.velocity.y * 0.98);
+            }
+
+            // ป้องกันมอนสเตอร์หยุดนิ่งสนิทเกินไป ให้มีการขยับเล็กน้อยแบบ Random
+            if (Math.abs(m.body.velocity.x) < 5 && Math.abs(m.body.velocity.y) < 5) {
+                m.body.setVelocity(
+                    Phaser.Math.Between(-20, 20),
+                    Phaser.Math.Between(-20, 20)
+                );
+            }
+        });
+    }
+
+    function spawnMonster(scene, texture, isGood) {
+        let rx = Phaser.Math.Between(50, 350);
+        let ry = Phaser.Math.Between(50, 400);
+        let m = scene.physics.add.sprite(rx, ry, texture);
+        m.setScale(0.4).setCollideWorldBounds(true).setBounce(1);
+        m.isGood = isGood;
+        monsters.add(m);
+    }
+
+    function handleCollision(p, m) {
+        if (m.isGood) {
+            score += 20;
+            this.cameras.main.shake(100, 0.01);
+        } else {
+            score -= 10;
+            this.cameras.main.flash(200, 200, 0, 0); 
+        }
+        scoreText.setText('Score: ' + score);
+        // สุ่มตำแหน่งใหม่ทันทีที่ชน
+        m.setPosition(Phaser.Math.Between(50, 350), Phaser.Math.Between(50, 450));
+    }
+
+    function twistMonsters(m1, m2) {
+        if (m1.isGood !== m2.isGood) {
+            m1.isGood = !m1.isGood;
+            m2.isGood = !m2.isGood;
+            m1.setTexture(m1.isGood ? 'monsterGood' : 'monsterBad');
+            m2.setTexture(m2.isGood ? 'monsterGood' : 'monsterBad');
+            this.cameras.main.shake(50, 0.005);
+        }
+    }
+</script>
+
+</body>
+</html>
